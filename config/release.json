@@ -1,0 +1,15 @@
+{
+  "version": "v0.1.0",
+  "repository": "studhall/samhsa-treatment-facility-directories",
+  "headline_geography": "50 states and District of Columbia",
+  "territories_separate": true,
+  "dashboard_year_field": "survey_year",
+  "pnw_states": ["WA", "OR", "ID"],
+  "high_confidence_geocode_target": 0.90,
+  "linkage_precision_target": 0.98,
+  "accuracy_targets": {
+    "1998-2001": 0.95,
+    "2003-2021": 0.98
+  }
+}
+

@@ -1,0 +1,31 @@
+.venv/
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.ruff_cache/
+
+# Source PDFs and generated data are release assets, not git history.
+data/raw/*
+data/interim/*
+data/processed/*
+release/*
+!data/raw/README.md
+!data/interim/README.md
+!data/processed/README.md
+!release/README.md
+
+# Local configuration and logs.
+.env
+config/local.*
+logs/*
+!logs/.gitkeep
+
+# R/session clutter.
+.Rhistory
+.RData
+.Rproj.user/
+
+# OS/editor clutter.
+Thumbs.db
+.DS_Store
+

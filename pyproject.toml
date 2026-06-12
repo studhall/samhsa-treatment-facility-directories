@@ -1,0 +1,39 @@
+[build-system]
+requires = ["setuptools>=69", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "samhsa-treatment-facility-directories"
+version = "0.1.0"
+description = "Parse and validate historical SAMHSA treatment-facility directory PDFs."
+readme = "README.md"
+requires-python = ">=3.11"
+license = {text = "MIT"}
+authors = [{name = "David Hall"}]
+dependencies = [
+  "numpy>=1.26",
+  "pandas>=2.1",
+  "pdfplumber>=0.10",
+  "pyarrow>=14",
+  "requests>=2.31",
+]
+
+[project.optional-dependencies]
+dev = ["pytest>=8", "ruff>=0.5"]
+
+[project.scripts]
+samhsa-dirs = "samhsa_dirs.cli:main"
+
+[tool.setuptools]
+package-dir = {"" = "src"}
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["src"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py311"
