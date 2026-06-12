@@ -70,8 +70,30 @@ def build_qa_report(
     gold_path: Path,
     geocoding: pd.DataFrame | None = None,
     linkage_review_accuracy: float | None = None,
+    expected_counts_path: Path | None = None,
 ) -> tuple[pd.DataFrame, dict[str, object]]:
     annual = qa_by_year(facilities, services)
+    count_reference_pass = False
+    if expected_counts_path is not None and expected_counts_path.exists():
+        expected = pd.read_csv(expected_counts_path)
+        annual = annual.merge(expected, on="directory_year", how="left")
+        annual["count_difference_share"] = (
+            (annual["rows"] - annual["expected_listings"]).abs()
+            / annual["expected_listings"]
+        )
+        annual["count_within_2pct"] = annual["count_difference_share"].le(0.02)
+        acceptance = (
+            annual["acceptance_reference"]
+            .fillna("no")
+            .astype(str)
+            .str.lower()
+            .eq("yes")
+        )
+        count_reference_pass = bool(
+            acceptance.all()
+            and annual["expected_listings"].notna().all()
+            and annual["count_within_2pct"].all()
+        )
     gold = evaluate_gold_sample(facilities, gold_path)
     early_target = 0.95
     modern_target = 0.98
@@ -95,8 +117,15 @@ def build_qa_report(
     geocode_pass = geocode_share is not None and geocode_share >= 0.90
     linkage_pass = linkage_review_accuracy is not None and linkage_review_accuracy >= 0.98
     report = {
-        "release_ready": structural_pass and gold_pass and geocode_pass and linkage_pass,
+        "release_ready": (
+            structural_pass
+            and count_reference_pass
+            and gold_pass
+            and geocode_pass
+            and linkage_pass
+        ),
         "structural_pass": structural_pass,
+        "count_reference_pass": count_reference_pass,
         "gold_sample": gold,
         "gold_target": gold_target,
         "geocoding_high_confidence_share": geocode_share,
@@ -107,6 +136,10 @@ def build_qa_report(
             reason
             for passed, reason in [
                 (structural_pass, "structural parser QA failed"),
+                (
+                    count_reference_pass,
+                    "independent annual count references are incomplete or outside 2%",
+                ),
                 (gold_pass, "manual gold sample is incomplete or below target"),
                 (geocode_pass, "high-confidence county assignment is below 90% or absent"),
                 (linkage_pass, "manual linkage precision is below 98% or absent"),
@@ -125,4 +158,3 @@ def write_qa(
     (output_dir / "qa_report.json").write_text(
         json.dumps(report, indent=2), encoding="utf-8"
     )
-

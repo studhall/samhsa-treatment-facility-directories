@@ -69,6 +69,7 @@ def command_build(args: argparse.Namespace) -> int:
         Path(args.geocoding) if args.geocoding else None,
         args.linkage_review_accuracy,
         args.materialize_service_status,
+        Path(args.expected_counts or _root() / "config" / "expected_counts.csv"),
     )
     print(json.dumps(report, indent=2))
     return 0 if report["release_ready"] else 2
@@ -82,6 +83,7 @@ def command_release(args: argparse.Namespace) -> int:
         Path(args.geocoding) if args.geocoding else None,
         args.linkage_review_accuracy,
         args.materialize_service_status,
+        Path(args.expected_counts or _root() / "config" / "expected_counts.csv"),
     )
     print(json.dumps(report, indent=2))
     return 0 if report["release_ready"] else 2
@@ -124,6 +126,7 @@ def build_parser() -> argparse.ArgumentParser:
     build.add_argument("--geocoding")
     build.add_argument("--linkage-review-accuracy", type=float)
     build.add_argument("--materialize-service-status", action="store_true")
+    build.add_argument("--expected-counts")
     build.add_argument("--max-pages", type=int)
     build.set_defaults(func=command_build)
 
@@ -134,6 +137,7 @@ def build_parser() -> argparse.ArgumentParser:
     release.add_argument("--geocoding")
     release.add_argument("--linkage-review-accuracy", type=float)
     release.add_argument("--materialize-service-status", action="store_true")
+    release.add_argument("--expected-counts")
     release.set_defaults(func=command_release)
 
     geocode = subparsers.add_parser("geocode")
@@ -150,4 +154,3 @@ def main() -> None:
     parser = build_parser()
     args = parser.parse_args()
     sys.exit(args.func(args))
-

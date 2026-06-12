@@ -50,9 +50,11 @@ The RDS export is separate so the Python build remains usable without R:
 ## Repository Layout
 
 - `config/year_manifest.csv`: source checksum, year mapping, and PDF layout.
+- `config/expected_counts.csv`: count comparators and acceptance-reference status.
 - `src/samhsa_dirs/`: parser, codebook, geocoding, linkage, QA, and release code.
 - `tests/`: unit tests and gold-sample schema.
 - `scripts/`: RDS export, source-rights audit, PDF archive, and dashboard export.
+- `scripts/build_cbp_comparison.py`: suppression-aware Swensen NAICS comparison.
 - `docs/`: methodology, data contracts, source rights, and release process.
 - `integrations/`: adapters to be copied into consuming projects.
 
@@ -86,4 +88,3 @@ advice.
 
 Use the repository release DOI or GitHub release citation when available, and
 cite the corresponding SAMHSA directories. See `CITATION.cff`.
-

@@ -1,0 +1,23 @@
+directory_year,expected_listings,source,acceptance_reference,notes
+1998,,Pending independent validation,no,
+2000,,Pending independent validation,no,
+2001,,Pending independent validation,no,
+2003,,Pending independent validation,no,
+2004,9047,Legacy parser comparison fixture,no,Not an independent acceptance reference
+2005,11058,Legacy parser comparison fixture,no,Not an independent acceptance reference
+2006,10835,Legacy parser comparison fixture,no,Not an independent acceptance reference
+2007,10974,Legacy parser comparison fixture,no,Not an independent acceptance reference
+2008,11267,Legacy parser comparison fixture,no,Not an independent acceptance reference
+2009,11260,Legacy parser comparison fixture,no,Not an independent acceptance reference
+2010,11245,Legacy parser comparison fixture,no,Not an independent acceptance reference
+2011,11280,Legacy parser comparison fixture,no,Not an independent acceptance reference
+2012,11545,Legacy parser comparison fixture,no,Not an independent acceptance reference
+2013,11694,Legacy parser comparison fixture,no,Not an independent acceptance reference
+2014,11475,Legacy parser comparison fixture,no,Not an independent acceptance reference
+2015,11897,Legacy parser comparison fixture,no,Not an independent acceptance reference
+2016,11709,Legacy parser comparison fixture,no,Not an independent acceptance reference
+2017,12021,Legacy parser comparison fixture,no,Not an independent acceptance reference
+2018,12161,Legacy parser comparison fixture,no,Not an independent acceptance reference
+2019,13406,Legacy parser comparison fixture,no,Not an independent acceptance reference
+2020,14170,Legacy parser comparison fixture,no,Not an independent acceptance reference
+2021,14281,Legacy parser comparison fixture,no,Not an independent acceptance reference

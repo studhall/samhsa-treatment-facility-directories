@@ -14,3 +14,7 @@
 
 Never bypass the QA result when publishing website data.
 
+`config/expected_counts.csv` intentionally marks legacy parser totals as
+comparison fixtures rather than independent acceptance references. Replace or
+supplement them with documented SAMHSA or independently verified counts and
+set `acceptance_reference` to `yes` only after review.
