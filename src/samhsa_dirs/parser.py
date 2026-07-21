@@ -24,14 +24,30 @@ PHONE_RE = re.compile(
     re.IGNORECASE,
 )
 PHONE_LIKE_RE = re.compile(r"^\s*\(?\d{3}\)?\s*[-.)]?\s*\d", re.IGNORECASE)
+OCR_PHONE_LIKE_RE = re.compile(
+    r"^\s*[0O]?\s*\(?\s*[\dOILS]{2,3}\)?[\dOILS().\s-]{4,}",
+    re.IGNORECASE,
+)
 SECONDARY_RE = re.compile(
     r"\b(Suite|Ste\.?|Unit|Room|Rm\.?|Floor|Building|Bldg\.?|Apt\.?|#)\b",
     re.IGNORECASE,
 )
 CONTACT_NOTE_RE = re.compile(
-    r"(?:w{2,3}[.~]|https?://|[A-Za-z0-9.~ -]+\.\s*"
+    r"(?:^\s*w{2,4}|w{2,3}[.~]|https?://|[A-Za-z0-9.~ -]+\.\s*"
     r"(?:com|corn|org|otg|net|gov|edu)\b|"
-    r"(?:Methadone|Women|Men|Adolescents?|Adults?)\s+(?:Clients?\s+)?Only)",
+    r"\w*ethadone.*Only|Buprenorphine.*Only|"
+    r"(?:\S+\s+){0,4}Clients?\s+Only|"
+    r"(?:Women|Men|Adolescents?|Adults?)\s+Only)",
+    re.IGNORECASE,
+)
+CONTACT_PREFIX_RE = re.compile(
+    r"^\s*(?:[A-Z]\s*/?\s*)?(?:Phone|Intake|Intakes|Hotline|Hotlines|"
+    r"[I1]-?l?ot(?:line|linc)|Toll Free|TTY|Fax)\s*:",
+    re.IGNORECASE,
+)
+URL_LIKE_RE = re.compile(
+    r"(?:^\s*[wv]{2,4}\S*|[A-Za-z0-9-]{2,}\s*\.\s*"
+    r"(?:com|corn|org|ol'g|net|gov|edu|mil|bz))",
     re.IGNORECASE,
 )
 ADDRESS_RE = re.compile(
@@ -56,6 +72,11 @@ class PositionedLine:
 
 def _column_boxes(page, config: YearConfig) -> list[tuple[float, float, float, float]]:
     width, height = page.width, page.height
+    if config.layout_profile == "three_column_transition":
+        return [
+            (width * x0, config.crop_top, width * x1, height - config.crop_bottom)
+            for x0, x1 in [(0.08, 0.35), (0.36, 0.635), (0.64, 0.91)]
+        ]
     usable = width - 2 * config.margin
     column_width = usable / config.n_columns
     boxes = []
@@ -66,6 +87,9 @@ def _column_boxes(page, config: YearConfig) -> list[tuple[float, float, float, f
             x0 += config.overlap
             x1 += config.overlap
         boxes.append((x0, config.crop_top, x1, height - config.crop_bottom))
+    if config.directory_year == 1998:
+        _, top, right, bottom = boxes[0]
+        boxes[0] = (30, top, right, bottom)
     return boxes
 
 
@@ -92,6 +116,7 @@ def is_city_header(line: str) -> bool:
     text = clean_text(line)
     return (
         bool(text)
+        and (text[0].isalpha() or text[0] in "[~")
         and text == text.upper()
         and not any(char.isdigit() for char in text)
         and len(text.split()) <= 6
@@ -105,6 +130,7 @@ def is_noise(line: str) -> bool:
         not line
         or bool(HEADER_NOISE_RE.search(line))
         or bool(re.fullmatch(r"[A-Za-z]", line))
+        or bool(re.fullmatch(r"(?:[iIl1]\s*){2,}", line))
         or bool(re.fullmatch(r"[^A-Za-z0-9]+", line))
     )
 
@@ -122,6 +148,9 @@ def _split_names_address(buffer: list[str]) -> tuple[str, str, str, list[str]]:
     else:
         address = cleaned[-1]
 
+    address = re.sub(r"(?<=\d)(?=[A-Z][a-z])", " ", address)
+    address = re.sub(r"\s+[\(\[]\s*$", "", address).strip()
+
     if not ADDRESS_RE.search(address):
         warnings.append("weak_address_pattern")
 
@@ -137,6 +166,24 @@ def _listing_id(config: YearConfig, line: PositionedLine, name: str, address: st
         [str(config.directory_year), str(line.page), str(line.column), name, address]
     )
     return "L" + hashlib.sha1(key.encode("utf-8")).hexdigest()[:15]
+
+
+def _source_anchor_id(
+    config: YearConfig,
+    line: PositionedLine,
+    location_anchor: str,
+    occurrence: int,
+) -> str:
+    key = "|".join(
+        [
+            str(config.directory_year),
+            str(line.page),
+            str(line.column),
+            clean_text(location_anchor).upper(),
+            str(occurrence),
+        ]
+    )
+    return "A" + hashlib.sha1(key.encode("utf-8")).hexdigest()[:19]
 
 
 def _derived_fields(codes: set[str]) -> dict[str, object]:
@@ -181,6 +228,9 @@ def parse_lines(
     buffer: list[str] = []
     current_header = ""
     open_record: dict[str, object] | None = None
+    anchor_occurrences: dict[tuple[int, int, str], int] = {}
+    record_order = 0
+    previous_position: tuple[int, int] | None = None
 
     def finalize() -> None:
         nonlocal open_record
@@ -207,6 +257,12 @@ def parse_lines(
         open_record = None
 
     for line in lines:
+        position = (line.page, line.column)
+        if previous_position is not None and position != previous_position:
+            finalize()
+            buffer = []
+        previous_position = position
+
         text = line.text
         if is_noise(text):
             continue
@@ -216,9 +272,20 @@ def parse_lines(
             finalize()
             name1, name2, address1, warnings = _split_names_address(buffer)
             listing_id = _listing_id(config, line, name1, address1)
+            location_anchor = clean_text(text).upper()
+            occurrence_key = (line.page, line.column, location_anchor)
+            occurrence = anchor_occurrences.get(occurrence_key, 0) + 1
+            anchor_occurrences[occurrence_key] = occurrence
+            record_order += 1
             geography = geography_fields(location.state)
             open_record = {
                 "listing_id": listing_id,
+                "source_anchor_id": _source_anchor_id(
+                    config, line, location_anchor, occurrence
+                ),
+                "source_location_anchor": location_anchor,
+                "source_anchor_occurrence": occurrence,
+                "source_record_order": record_order,
                 "facility_id": "",
                 "directory_year": config.directory_year,
                 "survey_year": config.survey_year,
@@ -257,15 +324,31 @@ def parse_lines(
                     open_record[target] = number
                 open_record["raw_record_text"] += f"\n{text}"
                 continue
-            if PHONE_LIKE_RE.search(text):
+            if (
+                PHONE_LIKE_RE.search(text)
+                or OCR_PHONE_LIKE_RE.search(text)
+                or text.lstrip().startswith("(")
+            ):
                 open_record["raw_record_text"] += f"\n{text}"
                 continue
-            if CONTACT_NOTE_RE.search(text):
+            if CONTACT_NOTE_RE.search(text) or URL_LIKE_RE.search(text):
+                open_record["raw_record_text"] += f"\n{text}"
+                continue
+            if CONTACT_PREFIX_RE.search(text):
                 open_record["raw_record_text"] += f"\n{text}"
                 continue
             if looks_like_service_line(text, codebook):
                 existing = str(open_record["raw_service_text"])
                 open_record["raw_service_text"] = clean_text(f"{existing} {text}")
+                open_record["raw_record_text"] += f"\n{text}"
+                continue
+            if (
+                not open_record["raw_service_text"]
+                and len(text) <= 8
+                and not is_city_header(text)
+                and re.fullmatch(r"[A-Za-z0-9'\".-]+", text)
+            ):
+                open_record["raw_service_text"] = text
                 open_record["raw_record_text"] += f"\n{text}"
                 continue
             finalize()
@@ -297,6 +380,14 @@ def parse_pdf(
     lines = extract_positioned_lines(pdf_path, config, max_pages=max_pages)
     facilities, services = parse_lines(lines, config, codebook, pdf_path.name)
     availability = codebook.loc[codebook["asked"]].copy()
+    if not services.empty:
+        observed_codes = set(services["code"].astype(str))
+        missing_codes = observed_codes - set(availability["code"].astype(str))
+        if missing_codes:
+            observed = codebook.loc[codebook["code"].isin(missing_codes)].copy()
+            observed["asked"] = True
+            observed["source"] = "observed_listing_fallback"
+            availability = pd.concat([availability, observed], ignore_index=True)
 
     result = {
         "facilities": facilities,

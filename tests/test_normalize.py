@@ -29,3 +29,11 @@ def test_parse_location_repairs_ocr_state_code():
     parsed = parse_location("Birmingham, AI.35203")
     assert parsed is not None
     assert parsed.state == "AL"
+
+
+def test_parse_location_repairs_period_separator_and_ocr_zip():
+    parsed = parse_location("Birmingham. AL 3S208")
+    assert parsed is not None
+    assert parsed.city == "Birmingham"
+    assert parsed.state == "AL"
+    assert parsed.zip_code == "35208"

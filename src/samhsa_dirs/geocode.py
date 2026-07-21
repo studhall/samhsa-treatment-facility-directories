@@ -9,7 +9,7 @@ import pandas as pd
 import requests
 
 
-BATCH_URL = "https://geocoding.geo.census.gov/geocoder/locations/addressbatch"
+BATCH_URL = "https://geocoding.geo.census.gov/geocoder/geographies/addressbatch"
 COORD_URL = "https://geocoding.geo.census.gov/geocoder/geographies/coordinates"
 
 
@@ -24,7 +24,10 @@ def _batch_payload(rows: pd.DataFrame) -> str:
 def geocode_batch(rows: pd.DataFrame, timeout: int = 120) -> pd.DataFrame:
     response = requests.post(
         BATCH_URL,
-        data={"benchmark": "Public_AR_Current"},
+        data={
+            "benchmark": "Public_AR_Current",
+            "vintage": "Current_Current",
+        },
         files={"addressFile": ("addresses.csv", _batch_payload(rows), "text/csv")},
         timeout=timeout,
     )
@@ -41,12 +44,22 @@ def geocode_batch(rows: pd.DataFrame, timeout: int = 120) -> pd.DataFrame:
             "coordinates",
             "tiger_line_id",
             "side",
+            "state_fips",
+            "county_code",
+            "tract",
+            "block",
         ],
         dtype=str,
     )
     coords = parsed["coordinates"].str.split(",", n=1, expand=True)
     parsed["longitude"] = pd.to_numeric(coords[0], errors="coerce")
     parsed["latitude"] = pd.to_numeric(coords[1], errors="coerce")
+    parsed["county_fips"] = (
+        parsed["state_fips"].fillna("").str.zfill(2)
+        + parsed["county_code"].fillna("").str.zfill(3)
+    )
+    invalid_county = parsed["state_fips"].isna() | parsed["county_code"].isna()
+    parsed.loc[invalid_county, "county_fips"] = ""
     parsed["geocode_method"] = "census_batch"
     parsed["geocode_confidence"] = parsed["match_status"].map(
         {"Match": "high", "No_Match": "unmatched", "Tie": "review"}
@@ -91,6 +104,30 @@ def apply_zip_fallback(
     return output.drop(columns=["county_fips_fallback"], errors="ignore")
 
 
+def finalize_geocoding(
+    facilities_path: Path,
+    cache_path: Path,
+    output_path: Path,
+    zip_crosswalk: Path,
+) -> pd.DataFrame:
+    """Combine completed Census matches with an explicitly low-confidence fallback."""
+    facilities = pd.read_parquet(facilities_path)
+    if cache_path.exists():
+        geocoded = pd.read_csv(cache_path, dtype=str)
+    else:
+        geocoded = pd.DataFrame(
+            columns=[
+                "listing_id",
+                "county_fips",
+                "geocode_method",
+                "geocode_confidence",
+            ]
+        )
+    geocoded = geocoded.drop_duplicates("listing_id", keep="last")
+    output = apply_zip_fallback(geocoded, facilities, zip_crosswalk)
+    output.to_csv(output_path, index=False)
+    return output
+
 def geocode_file(
     facilities_path: Path,
     output_path: Path,
@@ -108,13 +145,6 @@ def geocode_file(
 
     for chunk in chunks:
         batch = geocode_batch(chunk)
-        county_values = []
-        for row in batch.itertuples(index=False):
-            if pd.notna(row.longitude) and pd.notna(row.latitude):
-                county_values.append(county_for_coordinates(row.longitude, row.latitude))
-            else:
-                county_values.append("")
-        batch["county_fips"] = county_values
         results.append(batch)
         pd.concat(results, ignore_index=True).to_csv(cache_path, index=False)
         time.sleep(pause_seconds)
@@ -123,4 +153,3 @@ def geocode_file(
     output = apply_zip_fallback(output, facilities, zip_crosswalk)
     output.to_csv(output_path, index=False)
     return output
-

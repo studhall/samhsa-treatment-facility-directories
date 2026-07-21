@@ -7,6 +7,7 @@ from pathlib import Path
 import numpy as np
 import pandas as pd
 
+from . import __version__
 from .linkage import link_facilities
 from .manifest import load_manifest
 from .qa import build_qa_report, write_qa
@@ -49,7 +50,11 @@ def _write_data_dictionary(tables: dict[str, pd.DataFrame], release_dir: Path) -
 def _write_checksums(release_dir: Path) -> None:
     rows = []
     for path in sorted(release_dir.iterdir()):
-        if not path.is_file() or path.name == "checksums.sha256":
+        if not path.is_file() or path.name in {
+            "checksums.sha256",
+            "geocoding_cache.csv",
+            "zcta_county_relationship_2020.txt",
+        }:
             continue
         digest = hashlib.sha256(path.read_bytes()).hexdigest()
         rows.append(f"{digest}  {path.name}")
@@ -57,6 +62,179 @@ def _write_checksums(release_dir: Path) -> None:
         "\n".join(rows) + "\n", encoding="utf-8"
     )
 
+
+def _read_run_files(run_dir: Path, filename: str) -> pd.DataFrame:
+    files = sorted((run_dir / "years").glob(f"*/{filename}"))
+    return (
+        pd.concat([pd.read_parquet(path) for path in files], ignore_index=True)
+        if files
+        else pd.DataFrame()
+    )
+
+
+def _review_counts(review_path: Path | None) -> dict[int, int]:
+    if review_path is None or not review_path.exists():
+        return {}
+    review = pd.read_csv(review_path, dtype=str).fillna("")
+    complete = review.loc[review["review_complete"].str.lower().eq("yes")].copy()
+    if complete.empty:
+        return {}
+    return (
+        complete.groupby(complete["directory_year"].astype(int))
+        .size()
+        .astype(int)
+        .to_dict()
+    )
+
+
+def build_preliminary_release(
+    run_dir: Path,
+    release_dir: Path,
+    review_path: Path | None = None,
+    geocoding_path: Path | None = None,
+    harmonization_crosswalk: Path | None = None,
+    version: str = "v1.0.0-preliminary.1",
+) -> dict[str, object]:
+    """Build a public preview without asserting that validation gates passed."""
+    run_metadata = json.loads((run_dir / "run.json").read_text(encoding="utf-8"))
+    expected_years = {int(year) for year in run_metadata["expected_years"]}
+    year_dirs = {
+        int(path.name)
+        for path in (run_dir / "years").iterdir()
+        if path.is_dir() and path.name.isdigit()
+    }
+    if year_dirs != expected_years:
+        missing = sorted(expected_years - year_dirs)
+        extra = sorted(year_dirs - expected_years)
+        raise RuntimeError(f"Run years are incomplete; missing={missing}, extra={extra}")
+
+    required = [
+        "facilities.parquet",
+        "facility_services.parquet",
+        "service_availability.parquet",
+        "metadata.json",
+    ]
+    missing_files = [
+        f"{year}/{name}"
+        for year in sorted(expected_years)
+        for name in required
+        if not (run_dir / "years" / str(year) / name).exists()
+    ]
+    if missing_files:
+        raise RuntimeError(f"Run is missing required files: {missing_files}")
+
+    facilities = _read_run_files(run_dir, "facilities.parquet")
+    services = _read_run_files(run_dir, "facility_services.parquet")
+    availability = _read_run_files(run_dir, "service_availability.parquet")
+    if facilities.empty or services.empty or availability.empty:
+        raise RuntimeError("Preliminary release inputs are empty.")
+
+    reviewed = _review_counts(review_path)
+    priority_years = {1998, 2000, 2001, 2003, 2004, 2017, 2018, 2021}
+    facilities["release_status"] = "preliminary"
+    facilities["parser_version"] = run_metadata.get("parser_version", __version__)
+    facilities["run_id"] = run_metadata.get("run_id", run_dir.name)
+    facilities["has_parser_warning"] = facilities["parser_warnings"].fillna("[]").ne("[]")
+    facilities["reviewed_listings_in_year"] = (
+        facilities["directory_year"].map(reviewed).fillna(0).astype(int)
+    )
+    facilities["gold_target_in_year"] = facilities["directory_year"].map(
+        lambda year: 100 if int(year) in priority_years else 50
+    )
+    facilities["year_qa_status"] = np.where(
+        facilities["reviewed_listings_in_year"].gt(0),
+        "partial_review",
+        "not_reviewed",
+    )
+
+    geocoding = pd.DataFrame()
+    if geocoding_path is not None and geocoding_path.exists():
+        geocoding = pd.read_csv(geocoding_path, dtype=str).drop_duplicates("listing_id")
+        geo_cols = [
+            "listing_id",
+            "county_fips",
+            "latitude",
+            "longitude",
+            "geocode_method",
+            "geocode_confidence",
+        ]
+        facilities = facilities.drop(columns=geo_cols[1:], errors="ignore").merge(
+            geocoding[[col for col in geo_cols if col in geocoding.columns]],
+            on="listing_id",
+            how="left",
+        )
+
+    services["release_status"] = "preliminary"
+    services["parser_version"] = run_metadata.get("parser_version", __version__)
+    services["run_id"] = run_metadata.get("run_id", run_dir.name)
+
+    qa_by_year = (
+        facilities.groupby(["directory_year", "survey_year"], dropna=False)
+        .agg(
+            facility_count=("listing_id", "size"),
+            warning_count=("has_parser_warning", "sum"),
+            reviewed_listings=("reviewed_listings_in_year", "first"),
+            gold_target=("gold_target_in_year", "first"),
+            qa_status=("year_qa_status", "first"),
+        )
+        .reset_index()
+    )
+    qa_by_year["warning_share"] = (
+        qa_by_year["warning_count"] / qa_by_year["facility_count"]
+    )
+
+    release_dir.mkdir(parents=True, exist_ok=True)
+    facilities.to_csv(release_dir / "facilities.csv.gz", index=False, compression="gzip")
+    facilities.to_parquet(release_dir / "facilities.parquet", index=False)
+    services.to_csv(
+        release_dir / "facility_services.csv.gz", index=False, compression="gzip"
+    )
+    services.to_parquet(release_dir / "facility_services.parquet", index=False)
+    availability.drop_duplicates().to_csv(
+        release_dir / "service_availability.csv", index=False
+    )
+    qa_by_year.to_csv(release_dir / "qa_by_year.csv", index=False)
+    pd.DataFrame([row.__dict__ for row in load_manifest()]).to_csv(
+        release_dir / "source_manifest.csv", index=False
+    )
+    if harmonization_crosswalk is not None and harmonization_crosswalk.exists():
+        pd.read_csv(harmonization_crosswalk).to_csv(
+            release_dir / "harmonization_crosswalk.csv", index=False
+        )
+    if not geocoding.empty:
+        geocoding.to_csv(release_dir / "geocoding_results.csv", index=False)
+
+    metadata = {
+        "version": version,
+        "release_status": "preliminary",
+        "release_ready": False,
+        "run_id": run_metadata.get("run_id", run_dir.name),
+        "parser_version": run_metadata.get("parser_version", __version__),
+        "directory_years": sorted(expected_years),
+        "facility_rows": int(len(facilities)),
+        "service_rows": int(len(services)),
+        "reviewed_listings": int(sum(reviewed.values())),
+        "limitations": [
+            "Manual year-level gold-sample review is incomplete.",
+            "Counts, addresses, and service classifications may change during QA.",
+            "Historical phone numbers may be stale and must not be used to locate current care.",
+            "N-SSATS and N-SUMHSS are not directly trend-comparable across the 2020/2021 transition.",
+        ],
+    }
+    (release_dir / "release_metadata.json").write_text(
+        json.dumps(metadata, indent=2), encoding="utf-8"
+    )
+    _write_data_dictionary(
+        {
+            "facilities": facilities,
+            "facility_services": services,
+            "service_availability": availability,
+            "qa_by_year": qa_by_year,
+        },
+        release_dir,
+    )
+    _write_checksums(release_dir)
+    return metadata
 
 def materialize_service_status(
     facilities: pd.DataFrame,

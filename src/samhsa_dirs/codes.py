@@ -116,6 +116,10 @@ MASTER_CODES = {
     "HEOH", "EMP", "VOC", "HAV", "HBV", "NRT", "NSC", "STU", "TCC", "SMON",
     "SMOP", "SMPD", "ADLT", "CHLD", "SNR", "YAD", "FEM", "MALE", "BMO", "DU",
     "DUO", "MO", "OTPA", "VO", "AUDO", "AH",
+    # Historical directory codes that predate the modern N-SSATS legend.
+    "AR", "CH", "CT", "FG", "GHF", "ID", "IO", "IR", "MHF", "ML", "OA",
+    "OH", "OM", "OR", "OS", "PV", "PVT", "SAF", "SC", "SG", "TC", "UBN",
+    "WO",
 }
 MASTER_CODES.update(CORE_LABELS)
 
@@ -123,6 +127,7 @@ CODE_RE = re.compile(r"^(?P<code>[A-Z][A-Z0-9-]{0,7}|[FN]\d{1,3})\s+(?P<label>.+
 TOKEN_RE = re.compile(r"\b(?:[A-Z][A-Z0-9-]{0,7}|[FN]\d{1,3})\b")
 GROUP_MARKER_RE = re.compile(r"(?:^|\s)(?:[1-9]|[12]\d|3[01])(?:\s|$)")
 SERVICE_SEPARATOR_RE = re.compile(r"[+&~/]")
+OCR_CODE_ALIASES = {"PL": "PI"}
 
 
 def _heading_for(line: str, current: str) -> str:
@@ -196,9 +201,45 @@ def normalize_markers(text: str) -> str:
         if "CIRCLED" in name and float(numeric).is_integer():
             output = output.replace(char, f" |{int(numeric)}| ")
     output = unicodedata.normalize("NFKC", output)
+    output = re.sub(r"\b[Ii]'(?=\d)", "F", output)
+    output = re.sub(r"(?<=\d)(?=[FN]\d)", " ", output)
     output = re.sub(r"\(cid:\d+\)", " | ", output)
     output = re.sub(r"[♦◆◇◊■▪●•·�]+", " | ", output)
+    output = re.sub(r"(?<![A-Za-z0-9])[sS](?![A-Za-z0-9])", " | ", output)
     return clean_text(output)
+
+
+def split_concatenated_code(token: str, known: set[str]) -> list[str] | None:
+    if token in known:
+        return [token]
+    memo: dict[int, list[str] | None] = {}
+
+    def solve(position: int) -> list[str] | None:
+        if position == len(token):
+            return []
+        if position in memo:
+            return memo[position]
+        best: list[str] | None = None
+        for end in range(len(token), position + 1, -1):
+            piece = token[position:end]
+            if len(piece) < 2 or piece not in known:
+                continue
+            remainder = solve(end)
+            if remainder is None:
+                continue
+            candidate = [piece, *remainder]
+            if best is None or len(candidate) < len(best):
+                best = candidate
+        memo[position] = best
+        return best
+
+    result = solve(0)
+    return result if result and len(result) > 1 else None
+
+
+def normalize_ocr_code(token: str, known: set[str]) -> str:
+    alias = OCR_CODE_ALIASES.get(token, token)
+    return alias if alias in known else token
 
 
 def parse_service_tokens(
@@ -217,31 +258,42 @@ def parse_service_tokens(
     seen: set[tuple[int, str]] = set()
 
     for group_index, piece in enumerate(pieces, start=1):
-        for token in TOKEN_RE.findall(piece.upper()):
-            if token in {"PHONE", "INTAKE", "TOLL", "FREE", "HOTLINE"}:
+        for raw_token in TOKEN_RE.findall(piece.upper()):
+            if raw_token in {"PHONE", "INTAKE", "TOLL", "FREE", "HOTLINE"}:
                 continue
-            is_known = token in known or token in fallback or bool(re.fullmatch(r"[FN]\d{1,3}", token))
-            if not is_known and len(token) > 4:
-                continue
-            key = (group_index, token)
-            if key in seen:
-                continue
-            seen.add(key)
-            match = codebook.loc[codebook["code"] == token]
-            category = match.iloc[0]["category"] if not match.empty else "Unknown"
-            label = match.iloc[0]["label"] if not match.empty else ""
-            rows.append(
-                {
-                    "group_index": group_index,
-                    "code": token,
-                    "category": category,
-                    "label": label,
-                    "known_code": is_known,
-                    "status": "offered",
-                }
+            recognized = known | fallback
+            normalized_token = normalize_ocr_code(raw_token, recognized)
+            tokens = (
+                split_concatenated_code(normalized_token, recognized)
+                or [normalized_token]
             )
-            if not is_known:
-                unknown.append(token)
+            for token in tokens:
+                is_known = (
+                    token in recognized
+                    or bool(re.fullmatch(r"[FN]\d{1,3}", token))
+                )
+                if not is_known:
+                    unknown.append(token)
+                    continue
+                key = (group_index, token)
+                if key in seen:
+                    continue
+                seen.add(key)
+                match = codebook.loc[codebook["code"] == token]
+                category = (
+                    match.iloc[0]["category"] if not match.empty else "Unknown"
+                )
+                label = match.iloc[0]["label"] if not match.empty else ""
+                rows.append(
+                    {
+                        "group_index": group_index,
+                        "code": token,
+                        "category": category,
+                        "label": label,
+                        "known_code": True,
+                        "status": "offered",
+                    }
+                )
     return rows, list(dict.fromkeys(unknown))
 
 
@@ -253,10 +305,24 @@ def looks_like_service_line(line: str, codebook: pd.DataFrame) -> bool:
     if not tokens:
         return False
     known = set(codebook.loc[codebook["asked"], "code"].astype(str)) | MASTER_CODES
-    hits = sum(token in known or bool(re.fullmatch(r"[FN]\d{1,3}", token)) for token in tokens)
+    hits = 0
+    total = 0
+    for token in tokens:
+        normalized_token = normalize_ocr_code(token, known)
+        parts = split_concatenated_code(normalized_token, known)
+        expanded = parts or [normalized_token]
+        total += len(expanded)
+        hits += sum(
+            part in known or bool(re.fullmatch(r"[FN]\d{1,3}", part))
+            for part in expanded
+        )
     if GROUP_MARKER_RE.search(normalized) and hits >= 1:
         return True
     if len(SERVICE_SEPARATOR_RE.findall(normalized)) >= 2 and hits >= 1:
         return True
     has_lowercase = any(char.islower() for char in normalized)
-    return not has_lowercase and hits >= 1 and hits / len(tokens) >= 0.35
+    if len(tokens) == 1 and hits == 1 and len(normalized) <= 4:
+        return True
+    if hits >= 3 and hits / max(total, 1) >= 0.60:
+        return True
+    return not has_lowercase and hits >= 1 and hits / max(total, 1) >= 0.35

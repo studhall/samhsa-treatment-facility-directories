@@ -79,3 +79,80 @@ def test_service_continuation_does_not_become_next_facility_name():
         "South Central Alabama MHC",
     ]
     assert facilities.iloc[1]["name2"] == "First Step"
+
+
+def test_source_anchor_survives_name_and_address_parser_changes():
+    codebook = pd.DataFrame(
+        [{"code": "OP", "category": "Settings", "label": "Outpatient", "asked": True}]
+    )
+    original = [
+        PositionedLine(15, 1, "Facility One"),
+        PositionedLine(15, 1, "123 Main Street"),
+        PositionedLine(15, 1, "Abbeville, Alabama 36310"),
+        PositionedLine(15, 1, "1 OP"),
+    ]
+    corrected = [
+        PositionedLine(15, 1, "Facility One Corrected"),
+        PositionedLine(15, 1, "123 Main Street Suite 2"),
+        PositionedLine(15, 1, "Abbeville, Alabama 36310"),
+        PositionedLine(15, 1, "1 OP"),
+    ]
+    original_facilities, _ = parse_lines(original, config(), codebook, "test.pdf")
+    corrected_facilities, _ = parse_lines(corrected, config(), codebook, "test.pdf")
+    assert (
+        original_facilities.iloc[0]["source_anchor_id"]
+        == corrected_facilities.iloc[0]["source_anchor_id"]
+    )
+    assert (
+        original_facilities.iloc[0]["listing_id"]
+        != corrected_facilities.iloc[0]["listing_id"]
+    )
+
+
+def test_column_boundary_does_not_bleed_footer_fragment_into_next_record():
+    codebook = pd.DataFrame(
+        [
+            {"code": "TX", "category": "Type", "label": "", "asked": True},
+            {"code": "OS", "category": "Setting", "label": "", "asked": True},
+        ]
+    )
+    lines = [
+        PositionedLine(15, 1, "Prior Facility"),
+        PositionedLine(15, 1, "10 Main Street"),
+        PositionedLine(15, 1, "Prior City, Oregon 97000"),
+        PositionedLine(15, 1, "TX OS"),
+        PositionedLine(15, 1, "e v."),
+        PositionedLine(15, 2, "Next Facility"),
+        PositionedLine(15, 2, "20 Main Street"),
+        PositionedLine(15, 2, "Next City, Oregon 97001"),
+        PositionedLine(15, 2, "TX OS"),
+    ]
+
+    facilities, _ = parse_lines(lines, config(), codebook, "test.pdf")
+
+    assert len(facilities) == 2
+    assert facilities.iloc[1]["name1"] == "Next Facility"
+
+
+def test_ocr_hotline_prefix_keeps_following_service_lines():
+    codebook = pd.DataFrame(
+        [
+            {"code": "TX", "category": "Type", "label": "", "asked": True},
+            {"code": "OS", "category": "Setting", "label": "", "asked": True},
+            {"code": "DT", "category": "Type", "label": "", "asked": True},
+            {"code": "PI", "category": "Payment", "label": "", "asked": True},
+        ]
+    )
+    lines = [
+        PositionedLine(15, 1, "Example Hospital"),
+        PositionedLine(15, 1, "100 Main Street"),
+        PositionedLine(15, 1, "Portland, Oregon 97201"),
+        PositionedLine(15, 1, "(503)555-1111"),
+        PositionedLine(15, 1, "W/ Hotline:"),
+        PositionedLine(15, 1, "(503)555-2222"),
+        PositionedLine(15, 1, "TX OS DT/ PI"),
+    ]
+
+    facilities, _ = parse_lines(lines, config(), codebook, "test.pdf")
+
+    assert facilities.iloc[0]["service_codes"] == "DT OS PI TX"

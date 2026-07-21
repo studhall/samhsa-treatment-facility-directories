@@ -8,8 +8,8 @@ authors:
 repository-code: "https://github.com/studhall/samhsa-treatment-facility-directories"
 url: "https://econdavidhall.com/data/treatment-facilities/"
 license: MIT
-version: 0.1.0
-date-released: 2026-06-12
+version: 1.0.0-preliminary.1
+date-released: 2026-07-21
 keywords:
   - SAMHSA
   - N-SSATS

@@ -4,7 +4,9 @@
 
 One row per directory listing-year. Important fields include:
 
-- `listing_id`: immutable parser-level record ID.
+- `listing_id`: parser-version record ID used by derived tables.
+- `source_anchor_id`: immutable year/page/column/location anchor used to
+  reconcile frozen gold records after parser corrections.
 - `facility_id`: confidence-scored cross-year entity ID.
 - `directory_year` and `survey_year`.
 - facility name, historical address, and historical contact fields.
@@ -36,4 +38,3 @@ manual-review status. Ambiguous links remain separate.
 Created by the website/paper integration. Required fields are county, state,
 year, SAMHSA count, CBP count, publication status, lower and upper bounds, and
 common-support flag.
-

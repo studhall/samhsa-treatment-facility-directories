@@ -2,15 +2,26 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import sys
 from pathlib import Path
 
 import pandas as pd
 
-from .geocode import geocode_file
+from .geocode import finalize_geocoding, geocode_file
+from .gold import (
+    build_gold_workbook,
+    create_gold_sample,
+    evaluate_gold,
+    expand_gold_sample,
+    import_gold_workbook,
+    refresh_gold_sample,
+    render_sample_pages,
+)
 from .manifest import load_manifest, select_year, verify_manifest
 from .parser import parse_pdf
-from .release import build_release
+from .release import build_preliminary_release, build_release
+from .runs import default_run_id, latest_run, parse_all
 
 
 def _root() -> Path:
@@ -89,6 +100,43 @@ def command_release(args: argparse.Namespace) -> int:
     return 0 if report["release_ready"] else 2
 
 
+
+def command_preliminary_release(args: argparse.Namespace) -> int:
+    metadata = build_preliminary_release(
+        Path(args.run_dir),
+        Path(args.release_dir),
+        Path(args.review) if args.review else None,
+        Path(args.geocoding) if args.geocoding else None,
+        Path(args.harmonization_crosswalk) if args.harmonization_crosswalk else None,
+        args.version,
+    )
+    print(json.dumps(metadata, indent=2))
+    return 0
+
+
+def command_geocode_finalize(args: argparse.Namespace) -> int:
+    output = finalize_geocoding(
+        Path(args.facilities),
+        Path(args.cache),
+        Path(args.output),
+        Path(args.zip_crosswalk),
+    )
+    assigned = output["county_fips"].fillna("").ne("")
+    high = output["geocode_confidence"].eq("high")
+    print(
+        json.dumps(
+            {
+                "rows": len(output),
+                "assigned": int(assigned.sum()),
+                "assigned_share": float(assigned.mean()),
+                "high_confidence": int(high.sum()),
+                "high_confidence_share": float(high.mean()),
+            },
+            indent=2,
+        )
+    )
+    return 0
+
 def command_geocode(args: argparse.Namespace) -> int:
     geocode_file(
         Path(args.facilities),
@@ -98,6 +146,162 @@ def command_geocode(args: argparse.Namespace) -> int:
         args.batch_size,
     )
     return 0
+
+
+def _resolve_run_dir(value: str | None, resume: bool = False) -> Path:
+    runs_dir = _root() / "data" / "interim" / "runs"
+    if value:
+        return Path(value)
+    if resume:
+        existing = latest_run(runs_dir)
+        if existing is not None:
+            return existing
+    return runs_dir / default_run_id()
+
+
+def command_parse_all(args: argparse.Namespace) -> int:
+    run_dir = _resolve_run_dir(args.run_dir, args.resume)
+    report = parse_all(
+        Path(args.pdf_dir),
+        run_dir,
+        Path(args.manifest) if args.manifest else None,
+        args.resume,
+        args.workers,
+        set(args.years) if args.years else None,
+    )
+    print(json.dumps(report, indent=2))
+    return 0 if report["complete"] else 2
+
+
+def _node_path(value: str | None) -> Path | None:
+    raw = value or os.environ.get("SAMHSA_NODE")
+    return Path(raw) if raw else None
+
+
+def _node_modules_path(value: str | None) -> Path | None:
+    raw = value or os.environ.get("SAMHSA_NODE_MODULES")
+    return Path(raw) if raw else None
+
+
+def command_gold_create(args: argparse.Namespace) -> int:
+    run_dir = Path(args.run_dir)
+    output_dir = Path(
+        args.output_dir or _root() / "qa" / "review" / run_dir.name
+    )
+    if args.existing_review:
+        target_sizes: dict[int, int] = {}
+        if args.evaluation:
+            evaluation = pd.read_csv(args.evaluation)
+            target_sizes.update(
+                {
+                    int(row.directory_year): int(row.recommended_sample_size)
+                    for row in evaluation.itertuples(index=False)
+                }
+            )
+        for value in args.target_size or []:
+            year, size = value.split("=", 1)
+            target_sizes[int(year)] = int(size)
+        if not target_sizes:
+            raise ValueError(
+                "Expansion requires --evaluation or at least one --target-size YEAR=N"
+            )
+        review = expand_gold_sample(
+            run_dir,
+            Path(args.existing_review),
+            output_dir,
+            target_sizes,
+            args.seed,
+        )
+    else:
+        review = create_gold_sample(run_dir, output_dir, args.seed)
+    run_metadata = json.loads((run_dir / "run.json").read_text(encoding="utf-8"))
+    pdf_dir = Path(args.pdf_dir or str(run_metadata["pdf_dir"]))
+    if not args.skip_page_images:
+        review = render_sample_pages(
+            review, pdf_dir, output_dir, args.image_resolution
+        )
+    node = _node_path(args.node)
+    workbook_path = output_dir / "gold_review.xlsx"
+    if node is not None:
+        build_gold_workbook(
+            output_dir / "gold_review_source.json",
+            workbook_path,
+            output_dir / "workbook_previews",
+            node,
+            _node_modules_path(args.node_modules),
+        )
+    report = {
+        "rows": len(review),
+        "output_dir": str(output_dir),
+        "workbook": str(workbook_path) if workbook_path.exists() else None,
+        "workbook_pending_reason": (
+            None
+            if workbook_path.exists()
+            else "Set --node or SAMHSA_NODE to build the Excel workbook."
+        ),
+    }
+    print(json.dumps(report, indent=2))
+    return 0 if workbook_path.exists() or args.allow_csv_only else 2
+
+
+def command_gold_import(args: argparse.Namespace) -> int:
+    node = _node_path(args.node)
+    if node is None:
+        raise ValueError("gold-import requires --node or SAMHSA_NODE")
+    output = Path(args.output or _root() / "qa" / "gold" / "gold_sample.csv")
+    frame = import_gold_workbook(
+        Path(args.workbook),
+        output,
+        node,
+        _node_modules_path(args.node_modules),
+    )
+    print(json.dumps({"rows": len(frame), "output": str(output)}, indent=2))
+    return 0
+
+
+def command_gold_refresh(args: argparse.Namespace) -> int:
+    output_dir = Path(
+        args.output_dir or _root() / "qa" / "review" / Path(args.run_dir).name
+    )
+    review, unmatched = refresh_gold_sample(
+        Path(args.run_dir),
+        Path(args.review),
+        output_dir,
+    )
+    node = _node_path(args.node)
+    workbook_path = output_dir / "gold_review.xlsx"
+    if node is not None:
+        build_gold_workbook(
+            output_dir / "gold_review_source.json",
+            workbook_path,
+            output_dir / "workbook_previews",
+            node,
+            _node_modules_path(args.node_modules),
+        )
+    print(
+        json.dumps(
+            {
+                "rows": len(review),
+                "unmatched_anchors": len(unmatched),
+                "output_dir": str(output_dir),
+                "workbook": str(workbook_path) if workbook_path.exists() else None,
+            },
+            indent=2,
+        )
+    )
+    return 0 if unmatched.empty else 2
+
+
+def command_gold_evaluate(args: argparse.Namespace) -> int:
+    output_dir = Path(args.output_dir or _root() / "qa" / "gold")
+    report, summary = evaluate_gold(
+        Path(args.run_dir),
+        Path(args.gold_sample or output_dir / "gold_sample.csv"),
+        output_dir,
+    )
+    print(report.to_string(index=False))
+    print(json.dumps(summary, indent=2))
+    return 0 if summary["passing"] else 2
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -115,6 +319,15 @@ def build_parser() -> argparse.ArgumentParser:
     parse.add_argument("--output-dir")
     parse.add_argument("--max-pages", type=int)
     parse.set_defaults(func=command_parse)
+
+    parse_all_parser = subparsers.add_parser("parse-all")
+    parse_all_parser.add_argument("--pdf-dir", required=True)
+    parse_all_parser.add_argument("--run-dir")
+    parse_all_parser.add_argument("--manifest")
+    parse_all_parser.add_argument("--resume", action="store_true")
+    parse_all_parser.add_argument("--workers", type=int, default=2)
+    parse_all_parser.add_argument("--years", type=int, nargs="+")
+    parse_all_parser.set_defaults(func=command_parse_all)
 
     build = subparsers.add_parser("build")
     build.add_argument("--pdf-dir", required=True)
@@ -140,6 +353,16 @@ def build_parser() -> argparse.ArgumentParser:
     release.add_argument("--expected-counts")
     release.set_defaults(func=command_release)
 
+
+    preliminary = subparsers.add_parser("preliminary-release")
+    preliminary.add_argument("--run-dir", required=True)
+    preliminary.add_argument("--release-dir", required=True)
+    preliminary.add_argument("--review")
+    preliminary.add_argument("--geocoding")
+    preliminary.add_argument("--harmonization-crosswalk")
+    preliminary.add_argument("--version", default="v1.0.0-preliminary.1")
+    preliminary.set_defaults(func=command_preliminary_release)
+
     geocode = subparsers.add_parser("geocode")
     geocode.add_argument("--facilities", required=True)
     geocode.add_argument("--output", required=True)
@@ -147,6 +370,50 @@ def build_parser() -> argparse.ArgumentParser:
     geocode.add_argument("--zip-crosswalk")
     geocode.add_argument("--batch-size", type=int, default=1000)
     geocode.set_defaults(func=command_geocode)
+
+
+    geocode_finalize = subparsers.add_parser("geocode-finalize")
+    geocode_finalize.add_argument("--facilities", required=True)
+    geocode_finalize.add_argument("--cache", required=True)
+    geocode_finalize.add_argument("--output", required=True)
+    geocode_finalize.add_argument("--zip-crosswalk", required=True)
+    geocode_finalize.set_defaults(func=command_geocode_finalize)
+
+    gold_create = subparsers.add_parser("gold-create")
+    gold_create.add_argument("--run-dir", required=True)
+    gold_create.add_argument("--pdf-dir")
+    gold_create.add_argument("--output-dir")
+    gold_create.add_argument("--seed", type=int, default=20260612)
+    gold_create.add_argument("--existing-review")
+    gold_create.add_argument("--evaluation")
+    gold_create.add_argument("--target-size", action="append")
+    gold_create.add_argument("--image-resolution", type=int, default=110)
+    gold_create.add_argument("--skip-page-images", action="store_true")
+    gold_create.add_argument("--node")
+    gold_create.add_argument("--node-modules")
+    gold_create.add_argument("--allow-csv-only", action="store_true")
+    gold_create.set_defaults(func=command_gold_create)
+
+    gold_import = subparsers.add_parser("gold-import")
+    gold_import.add_argument("--workbook", required=True)
+    gold_import.add_argument("--output")
+    gold_import.add_argument("--node")
+    gold_import.add_argument("--node-modules")
+    gold_import.set_defaults(func=command_gold_import)
+
+    gold_refresh = subparsers.add_parser("gold-refresh")
+    gold_refresh.add_argument("--run-dir", required=True)
+    gold_refresh.add_argument("--review", required=True)
+    gold_refresh.add_argument("--output-dir")
+    gold_refresh.add_argument("--node")
+    gold_refresh.add_argument("--node-modules")
+    gold_refresh.set_defaults(func=command_gold_refresh)
+
+    gold_evaluate = subparsers.add_parser("gold-evaluate")
+    gold_evaluate.add_argument("--run-dir", required=True)
+    gold_evaluate.add_argument("--gold-sample")
+    gold_evaluate.add_argument("--output-dir")
+    gold_evaluate.set_defaults(func=command_gold_evaluate)
     return parser
 
 

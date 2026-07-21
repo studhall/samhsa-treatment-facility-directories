@@ -116,7 +116,9 @@ CENSUS_DIVISION = {
 }
 
 LOCATION_RE = re.compile(
-    r"^\s*(?P<city>.+?),\s*(?P<state>[A-Za-z0-9 .]+?)\s*(?P<zip>\d{5})(?:-\d{4})?\s*$"
+    r"^\s*(?P<city>.+?)[,.]\s*(?P<state>[A-Za-z0-9 .]+?)\s*"
+    r"(?P<zip>[0-9SOIL]{5})(?:-[0-9SOIL]{4})?\s*$",
+    re.IGNORECASE,
 )
 
 
@@ -145,7 +147,15 @@ def parse_location(value: str) -> Location | None:
             state = repaired
     if state not in VALID_STATE_CODES:
         return None
-    return Location(clean_text(match.group("city")), state, match.group("zip"))
+    zip_code = (
+        match.group("zip")
+        .upper()
+        .replace("S", "5")
+        .replace("O", "0")
+        .replace("I", "1")
+        .replace("L", "1")
+    )
+    return Location(clean_text(match.group("city")), state, zip_code)
 
 
 def normalize_key(value: str) -> str:
