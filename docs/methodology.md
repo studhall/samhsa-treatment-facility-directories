@@ -1,43 +1,27 @@
-# Parsing Methodology
+# Methodology
 
-The parser extracts each PDF column separately with `pdfplumber`, then reads
-columns from left to right and pages in order. City-state-ZIP lines anchor
-facility records. Text before an anchor is split into facility names and
-street address; contact and service lines after the anchor remain attached
-until the next record begins.
+## Sources
 
-Three layout profiles are configured in `config/year_manifest.csv`:
+The build combines 22 historical PDF directories (1998, 2000, 2001, and 2003-2021) with four official SAMHSA spreadsheets (2022-2025). Both `directory_year` and the represented `survey_year` are preserved.
 
-- `early_ocr`: 1998, 2000, and 2001;
-- `three_column`: 2003-2017;
-- `three_column_transition`: 2018;
-- `two_column`: 2019-2021.
+PDFs are parsed one printed column at a time with `pdfplumber`. City-state-ZIP lines anchor listings; source page, column, raw text, warnings, and unknown service tokens remain attached. Layout profiles cover early OCR, three-column, the 2018 transition, and two-column directories.
 
-Every listing retains source page, column, raw text, and warnings. Unknown
-service tokens are not discarded. The codebook extractor scans each
-directory's introductory legend and supplements only a small set of stable
-codes used for record detection.
+The spreadsheet importer validates checksums, worksheet names, row counts, states, and service codes before writing the same facility and service contracts. It preserves the source workbook, sheet, and row.
 
-The full parser writes a versioned run under `data/interim/runs`. Each listing
-also receives a `source_anchor_id` built from directory year, PDF page, column,
-the printed city-state-ZIP location anchor, and its occurrence number. This ID
-does not depend on parsed facility names or addresses, so the same frozen gold
-records can be compared after parser corrections.
+## Services and characteristics
 
-Directory year and survey year are separate. For example, the 2021 directory
-reports information collected in the 2020 N-SSATS.
+Each year's introductory legend or spreadsheet code reference defines what was asked. This keeps `offered`, `not_offered`, and `not_asked` distinct. A crosswalk harmonizes ownership, center type, care setting, payment, medication services, and service families while retaining original codes.
 
-## Quality Gates
+## Geography and linkage
 
-Automated QA blocks release for malformed state codes, directory headers
-parsed as facilities, unexplained annual discontinuities, incomplete gold
-samples, insufficient high-confidence geocoding, or unvalidated linkage.
-Nonempty output is not considered evidence of a successful parse.
+Census batch geocoding supplies coordinates and county FIPS when a street match is available. A ZIP-to-county crosswalk is used only for unmatched rows and is labeled low confidence. Stable facility IDs use exact normalized matches before geographically constrained fuzzy matching; uncertain matches remain separate.
 
-Gold review is evaluated separately by year. Directory years 2003-2021 require
-98% accuracy for names, addresses, and exact service-code sets; 1998, 2000, and
-2001 require 95%. Any record-boundary error is a hard blocker. Failed,
-concentrated, or uncertain samples expand by 50 listings up to 200.
-`gold-create --existing-review ... --evaluation ...` appends those records
-without changing prior source anchors. Unreviewable rows remain as flagged
-evidence and receive a replacement from the same sampling stratum.
+## Quality assurance
+
+PDF listings receive immutable `source_anchor_id` values based on directory year, page, column, location anchor, and occurrence. Frozen, page-linked gold samples are evaluated separately for every year. Directory years 2003-2021 require 98% name, address, and exact service-set accuracy; 1998, 2000, and 2001 require 95%. Boundary errors are hard blockers.
+
+The 2022-2025 spreadsheet years currently have checksum and structural QA, not equivalent manual gold review. Versioned releases retain explicit QA status until validation is complete.
+
+## County Business Patterns
+
+The comparison uses county CBP files and NAICS 621420 and 623220. Through 2016, absent target cells in the complete county files are treated as exact zeros. Beginning in 2017, omitted county-industry cells are never silently treated as zero; outputs report common support and bounds allowing zero to two establishments per omitted cell.

@@ -25,10 +25,11 @@ def build_cbp_comparison(
         raise ValueError(f"CBP cells missing columns: {sorted(missing)}")
 
     cbp = cbp_cells.loc[cbp_cells["naics"].astype(str).isin(TREATMENT_NAICS)].copy()
+    cbp = cbp.loc[cbp["year"].astype(int).isin(samhsa_counts["year"].astype(int).unique())]
     cbp["establishments"] = pd.to_numeric(cbp["establishments"], errors="coerce")
-    cbp["published"] = cbp["publication_status"].eq("published") & cbp[
-        "establishments"
-    ].notna()
+    cbp["published"] = cbp["publication_status"].isin(
+        ["published", "zero"]
+    ) & cbp["establishments"].notna()
     pre_break = cbp["year"].astype(int) <= 2016
     cbp["lower_bound"] = cbp["establishments"].where(cbp["published"], 0)
     cbp["upper_bound"] = cbp["establishments"].where(
@@ -45,6 +46,8 @@ def build_cbp_comparison(
         lower_bound=("lower_bound", "sum"),
         upper_bound=("upper_bound", "sum"),
     ).reset_index()
+    comparison["expected_cells"] = len(TREATMENT_NAICS)
+    comparison["cell_coverage_rate"] = comparison["published_cells"] / len(TREATMENT_NAICS)
     comparison["common_support"] = (
         comparison["published_cells"] == comparison["expected_cells"]
     )
@@ -54,6 +57,7 @@ def build_cbp_comparison(
     comparison.loc[~comparison["common_support"], "cbp_count"] = pd.NA
 
     output = samhsa_counts.merge(comparison, on=keys, how="outer")
+    output["samhsa_count"] = output["samhsa_count"].fillna(0).astype(int)
     output["reporting_break"] = output["year"].astype("Int64").ge(2017)
     return output[
         [
@@ -65,6 +69,7 @@ def build_cbp_comparison(
             "publication_status",
             "lower_bound",
             "upper_bound",
+            "cell_coverage_rate",
             "common_support",
             "reporting_break",
         ]

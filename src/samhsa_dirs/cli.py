@@ -8,6 +8,7 @@ from pathlib import Path
 
 import pandas as pd
 
+from .cbp_data import build_cbp_cells_from_archives, download_cbp_county_files
 from .geocode import finalize_geocoding, geocode_file
 from .gold import (
     build_gold_workbook,
@@ -22,6 +23,7 @@ from .manifest import load_manifest, select_year, verify_manifest
 from .parser import parse_pdf
 from .release import build_preliminary_release, build_release
 from .runs import default_run_id, latest_run, parse_all
+from .xlsx import import_xlsx_all, verify_xlsx_manifest
 
 
 def _root() -> Path:
@@ -108,6 +110,7 @@ def command_preliminary_release(args: argparse.Namespace) -> int:
         Path(args.review) if args.review else None,
         Path(args.geocoding) if args.geocoding else None,
         Path(args.harmonization_crosswalk) if args.harmonization_crosswalk else None,
+        Path(args.cbp_comparison) if args.cbp_comparison else None,
         args.version,
     )
     print(json.dumps(metadata, indent=2))
@@ -172,6 +175,50 @@ def command_parse_all(args: argparse.Namespace) -> int:
     print(json.dumps(report, indent=2))
     return 0 if report["complete"] else 2
 
+def command_verify_xlsx(args: argparse.Namespace) -> int:
+    results = verify_xlsx_manifest(
+        Path(args.xlsx_dir), Path(args.manifest) if args.manifest else None
+    )
+    frame = pd.DataFrame(results)
+    print(frame.to_string(index=False))
+    return 0 if frame["checksum_ok"].all() else 1
+
+
+def command_import_xlsx(args: argparse.Namespace) -> int:
+    report = import_xlsx_all(
+        Path(args.xlsx_dir),
+        Path(args.run_dir),
+        Path(args.manifest) if args.manifest else None,
+        args.resume,
+    )
+    print(json.dumps(report, indent=2))
+    return 0 if report["complete"] else 2
+
+def command_cbp_download(args: argparse.Namespace) -> int:
+    rows = download_cbp_county_files(
+        Path(args.output_dir),
+        args.start_year,
+        args.end_year,
+        not args.no_resume,
+    )
+    print(pd.DataFrame(rows).to_string(index=False))
+    return 0
+
+
+def command_cbp_build(args: argparse.Namespace) -> int:
+    cells = build_cbp_cells_from_archives(
+        Path(args.raw_dir),
+        args.start_year,
+        args.end_year,
+    )
+    destination = Path(args.output)
+    destination.parent.mkdir(parents=True, exist_ok=True)
+    if destination.suffix == ".parquet":
+        cells.to_parquet(destination, index=False)
+    else:
+        cells.to_csv(destination, index=False)
+    print(json.dumps({"rows": len(cells), "output": str(destination)}, indent=2))
+    return 0
 
 def _node_path(value: str | None) -> Path | None:
     raw = value or os.environ.get("SAMHSA_NODE")
@@ -329,6 +376,31 @@ def build_parser() -> argparse.ArgumentParser:
     parse_all_parser.add_argument("--years", type=int, nargs="+")
     parse_all_parser.set_defaults(func=command_parse_all)
 
+    verify_xlsx = subparsers.add_parser("verify-xlsx")
+    verify_xlsx.add_argument("--xlsx-dir", required=True)
+    verify_xlsx.add_argument("--manifest")
+    verify_xlsx.set_defaults(func=command_verify_xlsx)
+
+    import_xlsx = subparsers.add_parser("import-xlsx-all")
+    import_xlsx.add_argument("--xlsx-dir", required=True)
+    import_xlsx.add_argument("--run-dir", required=True)
+    import_xlsx.add_argument("--manifest")
+    import_xlsx.add_argument("--resume", action="store_true")
+    import_xlsx.set_defaults(func=command_import_xlsx)
+
+    cbp_download = subparsers.add_parser("cbp-download")
+    cbp_download.add_argument("--output-dir", required=True)
+    cbp_download.add_argument("--start-year", type=int, default=1998)
+    cbp_download.add_argument("--end-year", type=int, default=2023)
+    cbp_download.add_argument("--no-resume", action="store_true")
+    cbp_download.set_defaults(func=command_cbp_download)
+
+    cbp_build = subparsers.add_parser("cbp-build")
+    cbp_build.add_argument("--raw-dir", required=True)
+    cbp_build.add_argument("--output", required=True)
+    cbp_build.add_argument("--start-year", type=int, default=1998)
+    cbp_build.add_argument("--end-year", type=int, default=2023)
+    cbp_build.set_defaults(func=command_cbp_build)
     build = subparsers.add_parser("build")
     build.add_argument("--pdf-dir", required=True)
     build.add_argument("--through-directory-year", type=int, default=2021)
@@ -360,7 +432,8 @@ def build_parser() -> argparse.ArgumentParser:
     preliminary.add_argument("--review")
     preliminary.add_argument("--geocoding")
     preliminary.add_argument("--harmonization-crosswalk")
-    preliminary.add_argument("--version", default="v1.0.0-preliminary.1")
+    preliminary.add_argument("--cbp-comparison")
+    preliminary.add_argument("--version", default="v1.1.0")
     preliminary.set_defaults(func=command_preliminary_release)
 
     geocode = subparsers.add_parser("geocode")

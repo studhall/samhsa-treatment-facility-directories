@@ -1,14 +1,15 @@
 cff-version: 1.2.0
 message: "If you use these parsed historical directories, cite this release and the underlying SAMHSA publications."
-title: "SAMHSA Treatment Facility Directories: Historical Address-Level Data"
+title: "Historical SAMHSA Treatment Facility Data"
 type: dataset
 authors:
   - family-names: Hall
     given-names: David
+    email: dhall7@uoregon.edu
 repository-code: "https://github.com/studhall/samhsa-treatment-facility-directories"
 url: "https://econdavidhall.com/data/treatment-facilities/"
 license: MIT
-version: 1.0.0-preliminary.1
+version: 1.1.0
 date-released: 2026-07-21
 keywords:
   - SAMHSA
@@ -16,4 +17,4 @@ keywords:
   - N-SUMHSS
   - substance use treatment
   - treatment facilities
-
+  - County Business Patterns

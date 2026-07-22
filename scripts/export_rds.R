@@ -10,14 +10,21 @@ inputs <- c(
 )
 required <- c("facilities", "facility_services", "service_availability")
 
+read_release <- function(path) {
+  if (requireNamespace("data.table", quietly = TRUE)) {
+    return(as.data.frame(data.table::fread(path, showProgress = FALSE)))
+  }
+  read.csv(path, stringsAsFactors = FALSE, check.names = FALSE)
+}
+
 for (name in names(inputs)) {
   input <- file.path(release_dir, inputs[[name]])
   if (!file.exists(input)) {
     if (name %in% required) stop("Missing release input: ", input)
     next
   }
-  data <- read.csv(input, stringsAsFactors = FALSE, check.names = FALSE)
-  saveRDS(data, file.path(release_dir, paste0(name, ".rds")), compress = "xz")
-  message("Wrote ", file.path(release_dir, paste0(name, ".rds")))
+  data <- read_release(input)
+  output <- file.path(release_dir, paste0(name, ".rds"))
+  saveRDS(data, output, compress = "xz")
+  message("Wrote ", output)
 }
-

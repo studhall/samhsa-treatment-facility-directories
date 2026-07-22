@@ -6,24 +6,19 @@ tests/.artifacts/
 *.import.json
 .ruff_cache/
 
-# Source PDFs and generated data are release assets, not git history.
-data/raw/*
-data/interim/*
-data/processed/*
-release/*
+# Sources and generated outputs belong in GitHub Releases, not git history.
+data/raw/
+data/interim/
+data/processed/
+release/
 qa/review/*
 node_modules/
-!data/raw/README.md
-!data/interim/README.md
-!data/processed/README.md
-!release/README.md
 !qa/review/README.md
 
 # Local configuration and logs.
 .env
 config/local.*
-logs/*
-!logs/.gitkeep
+logs/
 
 # R/session clutter.
 .Rhistory
@@ -33,3 +28,4 @@ logs/*
 # OS/editor clutter.
 Thumbs.db
 .DS_Store
+/.quarto/

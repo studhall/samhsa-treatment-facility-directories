@@ -1,127 +1,71 @@
-# SAMHSA Treatment Facility Directories
+# Historical SAMHSA Treatment Facility Data
 
-This repository converts historical SAMHSA treatment-facility directory PDFs
-into documented, address-level research files. It is deliberately separate
-from the treatment-and-mortality paper and from the website that displays
-release aggregates.
+This project uses SAMHSA's public-use treatment facility directories to reconstruct address-level facility data. The 1998-2021 directories were published as PDFs; the parser converts them to analysis-ready files aligned with SAMHSA's 2022-2025 workbooks.
 
-The intended public release covers directory years 1998, 2000, 2001, and
-2003-2021. Most directories describe the prior survey year, so both
-`directory_year` and `survey_year` are retained. Dashboard and analytical
-outputs use `survey_year`.
+The parser code is included in this repository. Combined and year-specific data files are available in the [Version 1.1 release](https://github.com/studhall/samhsa-treatment-facility-directories/releases/tag/v1.1.0).
 
-## Current Status
+For quality assurance, I compare reconstructed facility counts with pre-2017 County Business Patterns estimates and use SAMHSA's 2022-2025 workbooks to corroborate facilities appearing in earlier directories.
 
-Version 1 Preview publishes the complete 22-directory reconstruction for research
-use while manual validation continues. Preview files are explicitly labeled
-`preliminary`; they do not set or imply `release_ready=true`. A later validated
-`v1.0.0` release remains gated on gold-sample, count, geocoding, and linkage
-review.
+## Download the data
 
-## Quick Start
+The Version 1.1 release contains:
 
-Use Python 3.11 or newer.
+- facility-year files in CSV.gz, Parquet, RDS, and Stata
+- facility-service files in CSV.gz, Parquet, and RDS
+- smaller facility files organized by survey year
+- the original 22 PDFs and four later SAMHSA spreadsheets
+- service codebooks, source manifests, checksums, geocoding fields, and QA status
+- a suppression-aware County Business Patterns comparison for NAICS 621420 and 623220
+
+Quality assurance is ongoing. Manual record review is underway, county geography is mostly based on a lower-confidence ZIP fallback, and historical phone numbers should not be used to locate current care.
+
+## Reproduce the build
+
+Python 3.11 or newer is recommended. Download the source PDFs from the Version 1.1 release, then run:
 
 ```powershell
 python -m pip install -e .[dev]
-python -m samhsa_dirs verify-manifest `
-  --pdf-dir "C:\path\to\N-SUMHHS\pdfs"
-python -m samhsa_dirs parse `
-  --pdf-dir "C:\path\to\N-SUMHHS\pdfs" `
-  --year 2021
+
 python -m samhsa_dirs parse-all `
-  --pdf-dir "C:\path\to\N-SUMHSS\pdfs" `
-  --resume `
-  --workers 2
-python -m samhsa_dirs gold-create `
+  --pdf-dir "path\to\pdfs" `
+  --resume --workers 2
+
+python -m samhsa_dirs import-xlsx-all `
+  --xlsx-dir "path\to\spreadsheets" `
   --run-dir "data\interim\runs\<run>" `
-  --seed 20260612
+  --resume
+
+python -m samhsa_dirs cbp-download `
+  --output-dir "data\raw\cbp" `
+  --start-year 1998 --end-year 2023
+
+python -m samhsa_dirs cbp-build `
+  --raw-dir "data\raw\cbp" `
+  --output "data\interim\cbp_cells.parquet" `
+  --start-year 1998 --end-year 2023
 ```
 
-`parse-all` verifies all 22 checksums, processes calibration waves, and writes
-each year atomically to a versioned run directory. Pilot outputs in
-`data/interim` never satisfy this full-build gate. The working Excel review and
-rendered PDF pages are local-only; `gold-import` creates the tracked
-authoritative CSV, and `gold-evaluate` applies year-specific adaptive gates.
-After parser corrections, `gold-refresh` updates parsed fields by immutable
-`source_anchor_id` while preserving corrections, checks, reviewer fields, and
-notes.
-If a year needs expansion, rerun `gold-create` with `--existing-review` and
-`--evaluation`; it preserves prior rows and appends the recommended records up
-to the 200-listing cap.
+The PDF parser verifies source checksums and writes each directory year atomically. The spreadsheet importer validates the official 2022-2025 workbooks and preserves their source rows. See [methodology](docs/methodology.md) for layout and harmonization details.
 
-On this machine, the Anaconda runtime containing `pdfplumber`, `pandas`,
-`pyarrow`, `requests`, and `pytest` is:
+## Quality assurance
 
-```powershell
-& "C:\Users\David\anaconda3\python.exe" -m pip install -e .[dev]
-```
+PDF years are reviewed against frozen, page-linked gold samples; spreadsheet years receive checksum, schema, row-count, state, and service-code checks. Parser warnings remain in the downloads so researchers can choose their own inclusion rules. The [pre-publication transition audit](docs/transition-audit.md) reports continuity diagnostics around the N-SSATS/N-SUMHSS redesign and later spreadsheet years.
 
-The RDS export is separate so the Python build remains usable without R:
+County Business Patterns cells are not silently converted to zero after the 2017 reporting change. The comparison reports common support and zero-to-two establishment bounds for omitted county-industry cells.
 
-```powershell
-& "C:\Program Files\R\R-4.4.1\bin\Rscript.exe" scripts/export_rds.R
-```
+## The repository contains
 
-## Version 1 Preview Build
+- `src/samhsa_dirs/`: parser, import, geocoding, linkage, QA, CBP, and release code
+- `config/`: source manifests and expected counts
+- `qa/`: gold-sample instructions and tracked review results
+- `scripts/`: release and export helpers
+- `tests/`: automated tests
+- `docs/`: methodology, data contracts, source rights, and release instructions
 
-After a complete 22-year parse, build the preliminary research files without
-bypassing or altering the validated release gate:
+Raw sources and generated datasets stay out of git history and are attached to GitHub Releases.
 
-```powershell
-python -m samhsa_dirs preliminary-release `
-  --run-dir "data\interim\runs\<run>" `
-  --release-dir "release\v1.0.0-preliminary.1" `
-  --review "qa\gold\gold_review.csv" `
-  --geocoding "data\interim\geocoding_results.csv" `
-  --harmonization-crosswalk "config\harmonization_crosswalk.csv" `
-  --version "v1.0.0-preliminary.1"
-```
+## Citation and contact
 
-Use `geocode-finalize` to combine cached Census geography matches with the
-explicitly low-confidence ZIP fallback before the preview build. Run the RDS
-export afterward so the R files match the CSV and Parquet assets.
+Please cite this repository release and the underlying SAMHSA directories. Citation metadata are in [CITATION.cff](CITATION.cff).
 
-## Repository Layout
-
-- `config/year_manifest.csv`: source checksum, year mapping, and PDF layout.
-- `config/expected_counts.csv`: count comparators and acceptance-reference status.
-- `src/samhsa_dirs/`: parser, codebook, geocoding, linkage, QA, and release code.
-- `qa/gold/`: authoritative gold review export and per-year evaluation.
-- `qa/review/`: ignored working workbook, PDF page images, and previews.
-- `tests/`: unit and integration tests.
-- `scripts/`: RDS export, source-rights audit, PDF archive, and dashboard export.
-- `scripts/build_cbp_comparison.py`: suppression-aware Swensen NAICS comparison.
-- `docs/`: methodology, data contracts, source rights, and release process.
-- `integrations/`: adapters to be copied into consuming projects.
-
-## Release Outputs
-
-Version 1 Preview and the later validated release include:
-
-- `facilities.csv.gz`, `facilities.parquet`, and `facilities.rds`
-- `facility_services.csv.gz`, `facility_services.parquet`, and `facility_services.rds`
-- `service_availability.csv`
-- `facility_entities.csv`
-- `geocoding_results.csv`
-- `source_manifest.csv`
-- `data_dictionary.csv`
-- `qa_report.json` and `qa_by_year.csv`
-
-Historical phone numbers describe the directory vintage and must not be used
-to locate current care. They are included in downloads but excluded from
-dashboard exports.
-
-## Source And Legal Notes
-
-The PDFs inspected locally contain SAMHSA public-domain notices permitting
-reproduction without permission and requesting source citation. They also
-state that the publication may not be distributed for a fee without written
-authorization. Run `scripts/audit_public_domain.py` for every release and
-review the resulting report. This is source-rights documentation, not legal
-advice.
-
-## Citation
-
-Use the repository release DOI or GitHub release citation when available, and
-cite the corresponding SAMHSA directories. See `CITATION.cff`.
+Questions and corrections are welcome: [dhall7@uoregon.edu](mailto:dhall7@uoregon.edu) or [econdavidhall.com](https://econdavidhall.com).

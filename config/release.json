@@ -1,6 +1,10 @@
 {
-  "version": "v0.1.0",
+  "release_version": "v1.1.0",
+  "release_status": "preliminary",
+  "parser_version": "0.1.0",
   "repository": "studhall/samhsa-treatment-facility-directories",
+  "directory_years": "1998, 2000, 2001, 2003-2025",
+  "survey_years": "1998, 1999, 2000, 2002-2024",
   "headline_geography": "50 states and District of Columbia",
   "territories_separate": true,
   "dashboard_year_field": "survey_year",
@@ -12,4 +16,3 @@
     "2003-2021": 0.98
   }
 }
-

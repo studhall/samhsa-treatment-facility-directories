@@ -2,39 +2,24 @@
 
 ## facilities
 
-One row per directory listing-year. Important fields include:
-
-- `listing_id`: parser-version record ID used by derived tables.
-- `source_anchor_id`: immutable year/page/column/location anchor used to
-  reconcile frozen gold records after parser corrections.
-- `facility_id`: confidence-scored cross-year entity ID.
-- `directory_year` and `survey_year`.
-- facility name, historical address, and historical contact fields.
-- state, ZIP, county FIPS, coordinates, region, division, and PNW indicator.
-- derived ownership, center type, care setting, medication, payment, and telehealth fields.
-- source PDF, page, column, raw record text, unknown codes, and parser warnings.
+One row per directory listing-year, including IDs, directory and survey years, historical name/address/contact fields, geography, derived characteristics, provenance, parser warnings, and QA status. Provenance identifies the PDF page and column or the spreadsheet sheet and row.
 
 ## facility_services
 
-One row per offered service code. `known_code=false` preserves OCR tokens that
-could not be reconciled to the year-specific legend.
+One row per listing and offered service code. Original tokens and `known_code` are retained.
 
 ## service_availability
 
-One row per service code appearing in a directory legend. Join this table to
-facility listings to distinguish `not_offered` from `not_asked`.
-
-The optional `facility_service_status.parquet` materializes all
-listing-code-year combinations with `offered` and `not_offered` statuses.
-Codes absent from `service_availability` are `not_asked`.
+One row per year-specific service code and question status. Use it to distinguish `not_offered` from `not_asked`.
 
 ## facility_entities
 
-Maps listings to stable facility IDs with linkage method, confidence, and
-manual-review status. Ambiguous links remain separate.
+Maps listings to stable cross-year facility IDs with linkage method, confidence, and review status. Ambiguous links remain separate.
+
+## geocoding_results
+
+Contains street-geocoder and ZIP-fallback results, county FIPS, method, confidence, and QA flags. An unmatched listing remains in `facilities`.
 
 ## cbp_comparison
 
-Created by the website/paper integration. Required fields are county, state,
-year, SAMHSA count, CBP count, publication status, lower and upper bounds, and
-common-support flag.
+One row per county and year with the SAMHSA listing count, CBP publication status, published count, lower and upper bounds, and common-support flag. Post-2016 omissions are never converted to exact zeros.

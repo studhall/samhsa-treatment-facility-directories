@@ -10,12 +10,15 @@ import pandas as pd
 from . import __version__
 from .linkage import link_facilities
 from .manifest import load_manifest
+from .xlsx import load_xlsx_manifest
 from .qa import build_qa_report, write_qa
 
 
 def _read_year_files(interim_dir: Path, stem: str) -> pd.DataFrame:
     files = sorted(interim_dir.glob(f"{stem}_*.parquet"))
-    return pd.concat([pd.read_parquet(path) for path in files], ignore_index=True) if files else pd.DataFrame()
+    if not files:
+        return pd.DataFrame()
+    return pd.concat([pd.read_parquet(path) for path in files], ignore_index=True)
 
 
 FIELD_DESCRIPTIONS = {
@@ -93,9 +96,10 @@ def build_preliminary_release(
     review_path: Path | None = None,
     geocoding_path: Path | None = None,
     harmonization_crosswalk: Path | None = None,
-    version: str = "v1.0.0-preliminary.1",
+    cbp_comparison_path: Path | None = None,
+    version: str = "v1.1.0",
 ) -> dict[str, object]:
-    """Build a public preview without asserting that validation gates passed."""
+    """Build a public release snapshot without asserting validation gates passed."""
     run_metadata = json.loads((run_dir / "run.json").read_text(encoding="utf-8"))
     expected_years = {int(year) for year in run_metadata["expected_years"]}
     year_dirs = {
@@ -128,7 +132,27 @@ def build_preliminary_release(
     availability = _read_run_files(run_dir, "service_availability.parquet")
     if facilities.empty or services.empty or availability.empty:
         raise RuntimeError("Preliminary release inputs are empty.")
+    if "group_index" in services:
+        services["group_index"] = services["group_index"].fillna("").astype(str)
+    else:
+        services["group_index"] = ""
 
+    if "source_format" not in facilities:
+        facilities["source_format"] = ""
+    missing_source = facilities["source_format"].fillna("").eq("")
+    facilities.loc[missing_source, "source_format"] = np.where(
+        facilities.loc[missing_source, "directory_year"].astype(int).ge(2022),
+        "official_xlsx",
+        "historical_pdf",
+    )
+    if "source_file" not in facilities:
+        facilities["source_file"] = facilities.get("source_pdf", "")
+    else:
+        facilities["source_file"] = facilities["source_file"].fillna("")
+        missing_file = facilities["source_file"].eq("")
+        facilities.loc[missing_file, "source_file"] = facilities.loc[
+            missing_file, "source_pdf"
+        ].fillna("")
     reviewed = _review_counts(review_path)
     priority_years = {1998, 2000, 2001, 2003, 2004, 2017, 2018, 2021}
     facilities["release_status"] = "preliminary"
@@ -139,14 +163,16 @@ def build_preliminary_release(
         facilities["directory_year"].map(reviewed).fillna(0).astype(int)
     )
     facilities["gold_target_in_year"] = facilities["directory_year"].map(
-        lambda year: 100 if int(year) in priority_years else 50
+        lambda year: 0 if int(year) >= 2022 else (100 if int(year) in priority_years else 50)
     )
-    facilities["year_qa_status"] = np.where(
-        facilities["reviewed_listings_in_year"].gt(0),
-        "partial_review",
-        "not_reviewed",
+    facilities["year_qa_status"] = np.select(
+        [
+            facilities["source_format"].eq("official_xlsx"),
+            facilities["reviewed_listings_in_year"].gt(0),
+        ],
+        ["official_xlsx_checks_passed", "partial_review"],
+        default="not_reviewed",
     )
-
     geocoding = pd.DataFrame()
     if geocoding_path is not None and geocoding_path.exists():
         geocoding = pd.read_csv(geocoding_path, dtype=str).drop_duplicates("listing_id")
@@ -186,6 +212,12 @@ def build_preliminary_release(
     release_dir.mkdir(parents=True, exist_ok=True)
     facilities.to_csv(release_dir / "facilities.csv.gz", index=False, compression="gzip")
     facilities.to_parquet(release_dir / "facilities.parquet", index=False)
+    for survey_year, year_rows in facilities.groupby("survey_year", sort=True):
+        year_rows.to_csv(
+            release_dir / f"facilities_{int(survey_year)}.csv.gz",
+            index=False,
+            compression="gzip",
+        )
     services.to_csv(
         release_dir / "facility_services.csv.gz", index=False, compression="gzip"
     )
@@ -194,7 +226,12 @@ def build_preliminary_release(
         release_dir / "service_availability.csv", index=False
     )
     qa_by_year.to_csv(release_dir / "qa_by_year.csv", index=False)
-    pd.DataFrame([row.__dict__ for row in load_manifest()]).to_csv(
+    pdf_manifest = pd.DataFrame([row.__dict__ for row in load_manifest()])
+    pdf_manifest["source_format"] = "historical_pdf"
+    xlsx_manifest = pd.DataFrame([row.__dict__ for row in load_xlsx_manifest()])
+    xlsx_manifest["source_format"] = "official_xlsx"
+    source_manifest = pd.concat([pdf_manifest, xlsx_manifest], ignore_index=True)
+    source_manifest.sort_values("directory_year").to_csv(
         release_dir / "source_manifest.csv", index=False
     )
     if harmonization_crosswalk is not None and harmonization_crosswalk.exists():
@@ -204,6 +241,13 @@ def build_preliminary_release(
     if not geocoding.empty:
         geocoding.to_csv(release_dir / "geocoding_results.csv", index=False)
 
+    cbp_comparison = pd.DataFrame()
+    if cbp_comparison_path is not None and cbp_comparison_path.exists():
+        cbp_comparison = pd.read_csv(
+            cbp_comparison_path,
+            dtype={"county_fips": str, "state_fips": str},
+        )
+        cbp_comparison.to_csv(release_dir / "cbp_comparison.csv", index=False)
     metadata = {
         "version": version,
         "release_status": "preliminary",
@@ -211,6 +255,8 @@ def build_preliminary_release(
         "run_id": run_metadata.get("run_id", run_dir.name),
         "parser_version": run_metadata.get("parser_version", __version__),
         "directory_years": sorted(expected_years),
+        "survey_years": sorted(facilities["survey_year"].astype(int).unique().tolist()),
+        "source_formats": sorted(facilities["source_format"].unique().tolist()),
         "facility_rows": int(len(facilities)),
         "service_rows": int(len(services)),
         "reviewed_listings": int(sum(reviewed.values())),
@@ -230,6 +276,7 @@ def build_preliminary_release(
             "facility_services": services,
             "service_availability": availability,
             "qa_by_year": qa_by_year,
+            **({"cbp_comparison": cbp_comparison} if not cbp_comparison.empty else {}),
         },
         release_dir,
     )
@@ -322,6 +369,12 @@ def build_release(
 
     facilities.to_csv(release_dir / "facilities.csv.gz", index=False, compression="gzip")
     facilities.to_parquet(release_dir / "facilities.parquet", index=False)
+    for survey_year, year_rows in facilities.groupby("survey_year", sort=True):
+        year_rows.to_csv(
+            release_dir / f"facilities_{int(survey_year)}.csv.gz",
+            index=False,
+            compression="gzip",
+        )
     offered.to_csv(
         release_dir / "facility_services.csv.gz", index=False, compression="gzip"
     )
