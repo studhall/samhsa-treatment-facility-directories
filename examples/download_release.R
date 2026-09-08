@@ -1,6 +1,6 @@
 release_url <- function(
   asset = "facilities.rds",
-  version = "v1.1.0"
+  version = "v1.1.1"
 ) {
   sprintf(
     "https://github.com/studhall/samhsa-treatment-facility-directories/releases/download/%s/%s",
@@ -12,7 +12,7 @@ release_url <- function(
 download_release <- function(
   asset = "facilities.rds",
   destination = file.path("data", asset),
-  version = "v1.1.0"
+  version = "v1.1.1"
 ) {
   dir.create(dirname(destination), recursive = TRUE, showWarnings = FALSE)
   utils::download.file(

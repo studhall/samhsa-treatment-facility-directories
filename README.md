@@ -2,26 +2,25 @@
 
 This project uses SAMHSA's public-use treatment facility directories to reconstruct address-level facility data. The 1998-2021 directories were published as PDFs; the parser converts them to analysis-ready files aligned with SAMHSA's 2022-2025 workbooks.
 
-The parser code is included in this repository. Combined and year-specific data files are available in the [Version 1.1 release](https://github.com/studhall/samhsa-treatment-facility-directories/releases/tag/v1.1.0).
+The parser code is included in this repository. Combined data and compact source archives are available in the [Version 1.1.1 release](https://github.com/studhall/samhsa-treatment-facility-directories/releases/tag/v1.1.1).
 
 For quality assurance, I compare reconstructed facility counts with pre-2017 County Business Patterns estimates and use SAMHSA's 2022-2025 workbooks to corroborate facilities appearing in earlier directories.
 
 ## Download the data
 
-The Version 1.1 release contains:
+The Version 1.1.1 release contains:
 
 - facility-year files in CSV.gz, Parquet, RDS, and Stata
 - facility-service files in CSV.gz, Parquet, and RDS
-- smaller facility files organized by survey year
-- the original 22 PDFs and four later SAMHSA spreadsheets
-- service codebooks, source manifests, checksums, geocoding fields, and QA status
-- a suppression-aware County Business Patterns comparison for NAICS 621420 and 623220
+- one ZIP of facility CSVs organized by survey year
+- archives containing the original 22 PDFs and four later SAMHSA spreadsheets
+- compact archives for service records, documentation, geocoding, checksums, and QA
 
 Quality assurance is ongoing. Manual record review is underway, county geography is mostly based on a lower-confidence ZIP fallback, and historical phone numbers should not be used to locate current care.
 
 ## Reproduce the build
 
-Python 3.11 or newer is recommended. Download the source PDFs from the Version 1.1 release, then run:
+Python 3.11 or newer is recommended. Download the source PDFs from the Version 1.1.1 release, then run:
 
 ```powershell
 python -m pip install -e .[dev]
